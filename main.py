@@ -1,7 +1,7 @@
 # Requires pythonnet, Python <=3.8, .NET Framework, pywin32
 # pyinstaller --hidden-import=pythonnet --onefile .\pyshares.py
 # "C:\Program Files\Python38\Scripts\pyinstaller.exe" --hidden-import=pythonnet --onefile PyShares.py
-import argparse, socket, traceback, sys, clr, win32net, os
+import argparse, socket, traceback, sys, clr, win32net, os, re
 from concurrent.futures import ThreadPoolExecutor
 clr.FindAssembly("System.DirectoryServices.DirectorySearcher")
 from System.DirectoryServices import DirectorySearcher
@@ -32,16 +32,16 @@ logo = """
          ░ ░                                                         
                        """
 print(logo)
-print("Joe Avanzato, @panscan")
-print("github.com/joeavanzato\n")
+print("[-] Joe Avanzato, @panscan")
+print("[-] github.com/joeavanzato\n")
 
 def getCurrentDomain():
     global CURRENT_DOMAIN
     try:
         CURRENT_DOMAIN=socket.getfqdn().split('.',1)[1]
-        print("Active Domain: "+CURRENT_DOMAIN)
+        print("[+] Active Domain: "+CURRENT_DOMAIN)
     except:
-        print("Oops!")
+        print("[!] Oops!")
         print(traceback.format_exc())
         sys.exit(1)
 
@@ -49,16 +49,16 @@ def getDC():
     global DC_ADDRESS
     try:
         DC_ADDRESS = socket.gethostbyname(CURRENT_DOMAIN)
-        print("Active DC: "+DC_ADDRESS)
+        print("[+] Active DC: "+DC_ADDRESS)
     except:
-        print("Oops!")
+        print("[!] Oops!")
         print(traceback.format_exc())
         sys.exit(1)
 
 def getUsersNET():
     global USER_LIST
     USER_LIST = []
-    print("\nUser Object List;")
+    print("\n[*] User Object List;")
     try:
         searcher = DirectorySearcher()
         searcher.Filter = "(objectCategory=user)"
@@ -69,13 +69,13 @@ def getUsersNET():
                 USER_LIST.append(name)
                 print(name)
     except:
-        print("Oops!")
+        print("[!] Oops!")
         print(traceback.format_exc())
         sys.exit(1)
 
 def getComputersNET():
     COMPUTER_LIST = []
-    print("\nComputer Object List;")
+    print("\n[*] Computer Object List;")
     try:
         searcher = DirectorySearcher()
         searcher.Filter = "(objectCategory=computer)"
@@ -87,7 +87,7 @@ def getComputersNET():
                 print(name)
         return COMPUTER_LIST
     except:
-        print("Oops!")
+        print("[!] Oops!")
         print(traceback.format_exc())
         sys.exit(1)
 
@@ -96,7 +96,7 @@ def getShares(target):
     SHARE_LIST = []
     #getComputersNET()
     #for target in COMPUTER_LIST:
-    print("\nScanning : "+target)
+    print("\n[+] Scanning : "+target)
     #ip = socket.gethostbyname(str(target))
     #print(target+" : "+ip)
     try:
@@ -105,23 +105,23 @@ def getShares(target):
             for key in share:
                 value = target+"\\\\"+share[key]
                 #SHARE_LIST.append(value)
-                print(value)
+                #print(value)
                 checkShare(value)
     except:
         print(traceback.format_exc())
-        print("Failed to Resolve Or Lacking Privileges: "+target)
+        print("[!] Failed to Resolve Or Lacking Privileges: "+target)
 
 def checkShare(path):
     global READABLE_SHARES
     try:
         path = "\\\\"+path
-        print(f"Checking: {path}")
+        print(f"[+] Checking: {path}")
         if os.access(path, os.R_OK): #This works for checking read access.
             READABLE_SHARES.append(path)
         #if os.access(path, os.W_OK): #This returns ok even when we don't have write access to the base directory.
         #    print("WRITE OK")
     except:
-        print(f"Error Checking Share: {path}")
+        print(f"[!] Error Checking Share: {path}")
 
 def processShares(READABLE_SHARES):
     with open("READABLE_SHARES.txt", mode='w') as f:
@@ -131,11 +131,14 @@ def processShares(READABLE_SHARES):
         _ = [executor.submit(crawlShare, i) for i in READABLE_SHARES]
 
 def crawlShare(SHARE):
+    print(f"[+] Starting File Scan for: {SHARE}")
+    interesting_extensions = ['csv','docx', 'xlsx']
+    regex_patterns = []
     INTERESTING_FILE_NAMES = []
     FILES_CONTAIN_INTERESTING = []
     for subdir, dirs, files in os.walk(SHARE):
         for file in files:
-            if str(file).endswith(('.exe','.xsd')):
+            if (os.path.splitext(file)[-1] in interesting_extensions):
                 INTERESTING_FILE_NAMES.append(os.path.join(subdir,file))
                 print(os.path.join(subdir,file))
 

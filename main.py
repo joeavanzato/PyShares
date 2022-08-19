@@ -21,8 +21,15 @@ parser.add_argument("-re", "--regex",
                     help='Pass Interesting Files through Regex Scanning',
                     required=False, action='store_true')
 parser.add_argument("-ss", "--sharpshares",
-                    help='Pass SharpShares Output Into PyShares, Bypassing Share Enumeration and initiating interesting file scan.',
-                    required=False, action='store_true')
+                    help='Specify SharpShares Output File, Pass SharpShares Output Into PyShares, Bypassing Share Enumeration and initiating interesting file scan.',
+                    required=False,
+                    type=str,
+                    nargs=1)
+parser.add_argument("-mt", "--maxthreads",
+                    help='Specify Max Threads for Operations',
+                    required=False,
+                    type=int,
+                    nargs=1)
 args = parser.parse_args()
 
 logo = """
@@ -40,6 +47,7 @@ logo = """
 print(logo)
 print("[-] Joe Avanzato, @panscan")
 print("[-] github.com/joeavanzato\n")
+MAX_THREADS = 10
 
 def getCurrentDomain():
     global CURRENT_DOMAIN
@@ -125,10 +133,11 @@ def getShares(target, current, total):
 def checkShare(path):
     global READABLE_SHARES
     try:
+
         path = path.replace("\\\\", "\\")
         path = "\\\\"+path
         print(f"[+] Checking: {path}")
-        if os.access(path, os.R_OK): #This works for checking read access.
+        if os.access(path, os.R_OK) and 'pyramid-dc' in path.lower(): #This works for checking read access. (Specifying dc for testing only)
             READABLE_SHARES.append(path)
         #if os.access(path, os.W_OK): #This returns ok even when we don't have write access to the base directory.
         #    print("WRITE OK")
@@ -137,34 +146,40 @@ def checkShare(path):
 
 def processShares(READABLE_SHARES):
     global INTERESTING_FILES
+    global INTERESTING_MATCHES
     INTERESTING_FILES = []
+    INTERESTING_MATCHES = {}
     with open("READABLE_SHARES.txt", mode='w') as f:
         for share in READABLE_SHARES:
             f.write(share+"\n")
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(MAX_THREADS) as executor:
         _ = [executor.submit(crawlShare, i) for i in READABLE_SHARES]
     if args.regex == True:
         print("[*] Regex Scanning Interesting Files")
-        with ThreadPoolExecutor(10) as executor:
+        with ThreadPoolExecutor(MAX_THREADS) as executor:
             _ = [executor.submit(crawlInterestingFiles, i) for i in INTERESTING_FILES]
 
 def crawlInterestingFiles(file):
+    global INTERESTING_MATCHES
     re_dict = {}
     re_dict["SSN"] = '\d{3}-\d{2}-\d{4}'
+    re_dict["SSN_Proximity"] = '(SSN|ssn)(\w+\W+){1,200}?(\d{9})'
     print(f"[+] Scanning: {file}")
     file_size = os.path.getsize(file)
     file_size_mb = file_size/1024/1024
     if file_size_mb > 100:
         print(f"[!] File Size > 100 MB, Skipping: {file}")
     else:
-        with open(file, mode='r') as f:
+        with open(file, mode='r', encoding='utf-8') as f:
             file_data = f.read()
-        for k,v in re_list:
+        for k,v in re_dict.items():
             matches = re.findall(v, file_data)
-            for m in matches:
-                print(m)
-            if len(m) != 0:
-                print(f"[*] Found Matches: {k}")
+            #for m in matches:
+            #    print(m)
+            if len(matches) != 0:
+                print(f"[*] Found Matches for Pattern: {k}, {file}")
+                INTERESTING_MATCHES[file] = k
+
 
 def crawlShare(SHARE):
     global INTERESTING_FILES
@@ -174,17 +189,18 @@ def crawlShare(SHARE):
     interesting_full_name = ['web.config']
     for subdir, dirs, files in os.walk(SHARE):
         for file in files:
+            full_path = os.path.join(subdir, file)
             name, extension = os.path.splitext(file)
             for i in interesting_names:
                 i_compiled = re.compile(i)
-                if re.search(i_compiled, name):
-                    INTERESTING_FILES.append(os.path.join(subdir, file))
-                    print("[*] Interesting File: " + os.path.join(subdir, file))
-                    continue
+                if re.search(i_compiled, name) and not full_path in INTERESTING_FILES:
+                    INTERESTING_FILES.append(full_path)
+                    print("[*] Interesting File: " + full_path)
+                    break
             fullname = name+extension
-            if (extension in interesting_extensions) or (name.lower() in interesting_names) or (fullname in interesting_full_name):
-                INTERESTING_FILES.append(os.path.join(subdir,file))
-                print("[*] Interesting File: "+os.path.join(subdir,file))
+            if ((extension in interesting_extensions) or (name.lower() in interesting_names) or (fullname in interesting_full_name)) and not (full_path in INTERESTING_FILES):
+                INTERESTING_FILES.append(full_path)
+                print("[*] Interesting File: "+full_path)
 
 
 def main():
@@ -194,10 +210,19 @@ def main():
     if args.users == True:
         getUsersNET()
     else:
-        COMPUTER_LIST = getComputersNET()
         READABLE_SHARES = []
+        if args.sharpshares is None:
+            COMPUTER_LIST = getComputersNET()
+        else:
+            COMPUTER_LIST = []
+            with open(args.sharpshares[0]) as f:
+                for line in f:
+                    if line.startswith('[r]') or line.startswith('[w]'):
+                        line = line.replace('[r] ','')
+                        line = line.replace('[w] ','')
+                        COMPUTER_LIST.append(line.strip())
         COUNT = 0
-        with ThreadPoolExecutor(10) as executor:
+        with ThreadPoolExecutor(MAX_THREADS) as executor:
             for i in COMPUTER_LIST:
                 COUNT = COUNT + 1
                 _ = executor.submit(getShares, i, COUNT, len(COMPUTER_LIST))

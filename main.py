@@ -54,7 +54,9 @@ else:
     MAX_THREADS = 10
 
 re_dict = {}
-# Some stolen from https://github.com/sdushantha/dora/blob/main/dora/db/data.json
+# https://github.com/sdushantha/dora/blob/main/dora/db/data.json
+# https://github.com/BishopFox/GitGot/blob/master/checks/default.list
+# https://github.com/dxa4481/truffleHogRegexes/blob/master/truffleHogRegexes/regexes.json
 re_dict["SSN"] = '\d{3}-\d{2}-\d{4}'
 re_dict["SSN_Proximity"] = '(SSN|ssn)[\w\W]{1,200}?(\d{9}|\d{3}-\d{2}-\d{4})'
 re_dict['Google_API'] = "AIza[0-9A-Za-z-_]{35}"
@@ -116,7 +118,9 @@ re_dict['Secrets_Generic_1'] = "(pass|password|secret|key|token)[:=-][\w!?=!@#$%
 re_dict['Mastercard_Num'] = "(?:5[1-5][0-9]{2}|222[1-9]|22[3-9][0-9]|2[3-6][0-9]{2}|27[01][0-9]|2720)[0-9]{12}$"
 re_dict['Visa_Num'] = "\\b([4]\d{3}[\s]\d{4}[\s]\d{4}[\s]\d{4}|[4]\d{3}[-]\d{4}[-]\d{4}[-]\d{4}|[4]\d{3}[.]\d{4}[.]\d{4}[.]\d{4}|[4]\d{3}\d{4}\d{4}\d{4})\\b"
 re_dict['American_Express_Num'] = "^3[47][0-9]{13}$"
-
+re_dict['Gmail_API'] = "AIza[0-9A-Za-z\\-_]{35}"
+re_dict['Gmail_Service_Account'] = "\"type\": \"service_account\""
+re_dict['Private_Keys'] = "(?s)(-----BEGIN (RSA|DSA|PGP|EC|) PRIVATE KEY.*END (RSA|DSA|PGP|EC|) PRIVATE KEY( BLOCK)?-----)"
 re_string = ""
 i = 0
 total_keys = len(re_dict)
@@ -129,6 +133,21 @@ for k, v in re_dict.items():
     else:
         re_string += f"(?P<{k}>{new})"
 all_regex_compiled = re.compile(re_string)
+excluded_paths = r"Python[0-9]{1,3}\\Lib\\(site-packages|test)|Windows\\Microsoft.NET\\Framework"
+excluded_paths_compiled = re.compile(excluded_paths)
+excluded_dir_list = ['WinSxS','Windows','Python27','Microsoft.NET','site-packages',]
+# Files must have both an interesting extension as well as an interesting key-word in the file-name
+interesting_extensions = ['.csv', '.docx', '.xlsx', '.docm', '.xlsm', '.xls', '.txt',  # Productivity Extensions
+                          '.pem', '.p8', '.cer', '.der', '.spc', '.p7a', '.p7b', '.p7c', '.pfx',
+                          '.p12']  # Private Key Material
+interesting_names = 'ssn|password|password|passes|credentials|socials|secret|sensitive|pass|token|api|key|creditcard|payment|invoice|tax'
+interesting_names_compiled = re.compile(interesting_names)
+# If a file has an extension in this list, it is always identified unless it is in an excluded path.
+standalone_interesting_extensions = []
+# If a file has a name in this list, it is always identified unless it is in an excluded path.
+standalone_interesting_names = []
+# If a file has a full name+extension matching one in this list, it is always identified unless it is in an excluded path.
+interesting_full_name = ['web.config']
 
 
 def getCurrentDomain():
@@ -211,7 +230,7 @@ def getShares(target, current, total):
                 #print(value)
                 checkShare(value)
     except e:
-        if e == "pywintypes.error: (53, 'NetShareEnum', 'The network path was not found.')":
+        if str(e) == "pywintypes.error: (53, 'NetShareEnum', 'The network path was not found.')":
             print("[!] Failed to Resolve Or Lacking Privileges: " + target)
         else:
             print(traceback.format_exc())
@@ -242,10 +261,17 @@ def processShares(READABLE_SHARES):
             f.write(share+"\n")
     with ThreadPoolExecutor(MAX_THREADS) as executor:
         _ = [executor.submit(crawlShare, i) for i in READABLE_SHARES]
+    with open("INTERESTING_FILES.txt", mode='w') as f:
+        for i in INTERESTING_FILES:
+            f.write(i+"\n")
     if args.regex == True:
         print("[*] Regex Scanning Interesting Files")
         with ThreadPoolExecutor(MAX_THREADS) as executor:
             _ = [executor.submit(scanInterestingFile, i) for i in INTERESTING_FILES]
+        with open("REGEX_MATCHES.txt", mode='w') as f:
+            for k,v in FILE_MATCH_COUNT.items():
+                if v != 0:
+                    f.write(f"{k}:{v}\n")
 
 def scanInterestingFile(file):
     global INTERESTING_MATCHES
@@ -282,22 +308,24 @@ def scanInterestingFile(file):
 def crawlShare(SHARE):
     global INTERESTING_FILES
     print(f"[+] Starting File Scan for: {SHARE}")
-    interesting_extensions = ['.csv','.docx', '.xlsx', #Productivity Extensions
-                              '.pem', '.p8','.cer','.der','.spc','.p7a','.p7b','.p7c','.pfx','.p12'] #Private Key Material
-
-    # File Names are searched for
-    interesting_names = 'ssn|password|password|passes|credentials|socials|secret|sensitive|pass|token|api|key'
-    i_compiled = re.compile(interesting_names)
-    interesting_full_name = ['web.config']
     for subdir, dirs, files in os.walk(SHARE):
+        for d in excluded_dir_list:
+            if d in dirs:
+                dirs.remove(d)
         for file in files:
             full_path = os.path.join(subdir, file)
             name, extension = os.path.splitext(file)
             fullname = name+extension
-            if re.search(i_compiled, full_path) and not full_path in INTERESTING_FILES:
+            if (re.search(interesting_names_compiled, full_path) and extension in interesting_extensions) \
+                    and not full_path in INTERESTING_FILES\
+                    and not re.search(excluded_paths_compiled, full_path):
                 INTERESTING_FILES.append(full_path)
                 print("[*] Interesting File: " + full_path)
-            if ((extension in interesting_extensions) or (name.lower() in interesting_names) or (fullname in interesting_full_name)) and not (full_path in INTERESTING_FILES):
+            if ((extension in standalone_interesting_extensions)
+                or (name.lower() in standalone_interesting_names)
+                or (fullname in interesting_full_name)) \
+                and not (full_path in INTERESTING_FILES)\
+                and not re.search(excluded_paths_compiled, full_path):
                 INTERESTING_FILES.append(full_path)
                 print("[*] Interesting File: "+full_path)
 

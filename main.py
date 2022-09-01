@@ -135,7 +135,7 @@ for k, v in re_dict.items():
 all_regex_compiled = re.compile(re_string)
 excluded_paths = r"Python[0-9]{1,3}\\Lib\\(site-packages|test)|Windows\\Microsoft.NET\\Framework"
 excluded_paths_compiled = re.compile(excluded_paths)
-excluded_dir_list = ['WinSxS','Windows','Python27','Microsoft.NET','site-packages',]
+excluded_dir_list = ['WinSxS','Windows','Python27','Microsoft.NET','site-packages','Microsoft Visual Studio',]
 # Files must have both an interesting extension as well as an interesting key-word in the file-name
 interesting_extensions = ['.csv', '.docx', '.xlsx', '.docm', '.xlsm', '.xls', '.txt',  # Productivity Extensions
                           '.pem', '.p8', '.cer', '.der', '.spc', '.p7a', '.p7b', '.p7c', '.pfx',
@@ -340,19 +340,18 @@ def main():
         READABLE_SHARES = []
         if args.sharpshares is None:
             COMPUTER_LIST = getComputersNET()
+            COUNT = 0
+            with ThreadPoolExecutor(MAX_THREADS) as executor:
+                for i in COMPUTER_LIST:
+                    COUNT = COUNT + 1
+                    _ = executor.submit(getShares, i, COUNT, len(COMPUTER_LIST))
         else:
-            COMPUTER_LIST = []
             with open(args.sharpshares[0]) as f:
                 for line in f:
                     if line.startswith('[r]') or line.startswith('[w]'):
                         line = line.replace('[r] ','')
                         line = line.replace('[w] ','')
-                        COMPUTER_LIST.append(line.strip())
-        COUNT = 0
-        with ThreadPoolExecutor(MAX_THREADS) as executor:
-            for i in COMPUTER_LIST:
-                COUNT = COUNT + 1
-                _ = executor.submit(getShares, i, COUNT, len(COMPUTER_LIST))
+                        READABLE_SHARES.append(line.strip())
         if args.files == True:
             processShares(READABLE_SHARES)
 
